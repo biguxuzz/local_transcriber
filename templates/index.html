@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+
+{% block title %}Загрузка файлов - Local Transcriber{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8 mx-auto">
+        <!-- Header -->
+        <div class="text-center mb-5">
+            <h1 class="display-4 text-primary">
+                <i class="bi bi-soundwave me-3"></i>
+                Local Transcriber
+            </h1>
+            <p class="lead text-muted">
+                Автоматическое распознавание речи из аудио и видео файлов
+            </p>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="card shadow-lg border-0 mb-4" id="upload-section">
+            <div class="card-header bg-primary text-white">
+                <h4 class="card-title mb-0">
+                    <i class="bi bi-cloud-upload me-2"></i>
+                    Загрузка файлов
+                </h4>
+            </div>
+            <div class="card-body">
+                <form id="upload-form" enctype="multipart/form-data">
+                    <div class="mb-4">
+                        <label for="files" class="form-label">
+                            <strong>Выберите аудио или видео файлы</strong>
+                        </label>
+                        <input type="file" 
+                               class="form-control form-control-lg" 
+                               id="files" 
+                               name="files" 
+                               multiple 
+                               accept=".wav,.mp3,.mp4,.mkv"
+                               required>
+                        <div class="form-text">
+                            Поддерживаемые форматы: WAV, MP3, MP4, MKV. Максимальный размер: 2GB
+                        </div>
+                    </div>
+
+                    <!-- File List -->
+                    <div id="file-list" class="mb-4" style="display: none;">
+                        <h6>Выбранные файлы:</h6>
+                        <div id="file-items" class="list-group"></div>
+                        
+                        <div class="mt-3">
+                            <small class="text-muted">
+                                Перетащите файлы для изменения порядка объединения
+                            </small>
+                        </div>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg" id="upload-btn">
+                            <i class="bi bi-upload me-2"></i>
+                            Начать обработку
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Processing Section -->
+        <div class="card shadow-lg border-0 mb-4" id="processing-section" style="display: none;">
+            <div class="card-header bg-success text-white">
+                <h4 class="card-title mb-0">
+                    <i class="bi bi-gear-fill me-2"></i>
+                    Обработка
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="fw-bold">Прогресс обработки:</span>
+                        <span id="progress-percentage">0%</span>
+                    </div>
+                    <div class="progress mb-2" style="height: 20px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             id="progress-bar" 
+                             role="progressbar" 
+                             style="width: 0%"
+                             aria-valuenow="0" 
+                             aria-valuemin="0" 
+                             aria-valuemax="100">
+                        </div>
+                    </div>
+                    <div class="text-center">
+                        <small class="text-muted" id="current-step">Инициализация...</small>
+                    </div>
+                </div>
+
+                <!-- Processing Steps -->
+                <div class="row text-center">
+                    <div class="col-md-3 mb-3">
+                        <div class="processing-step" id="step-upload">
+                            <div class="step-icon">
+                                <i class="bi bi-cloud-upload"></i>
+                            </div>
+                            <div class="step-text">Загрузка</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="processing-step" id="step-convert">
+                            <div class="step-icon">
+                                <i class="bi bi-arrow-repeat"></i>
+                            </div>
+                            <div class="step-text">Конвертация</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="processing-step" id="step-diarize">
+                            <div class="step-icon">
+                                <i class="bi bi-people"></i>
+                            </div>
+                            <div class="step-text">Диаризация</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="processing-step" id="step-transcribe">
+                            <div class="step-icon">
+                                <i class="bi bi-mic"></i>
+                            </div>
+                            <div class="step-text">Транскрибация</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Processing Info -->
+                <div id="processing-info" class="mt-4">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <small class="text-muted">
+                                <strong>ID задачи:</strong> <span id="job-id">-</span>
+                            </small>
+                        </div>
+                        <div class="col-md-6 text-end">
+                            <small class="text-muted">
+                                <strong>Статус:</strong> <span id="job-status">-</span>
+                            </small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cancel Button -->
+                <div class="text-center mt-4">
+                    <button type="button" class="btn btn-outline-danger" onclick="cancelProcessing()">
+                        <i class="bi bi-x-circle me-2"></i>
+                        Отменить обработку
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="card shadow-lg border-0 mb-4" id="results-section" style="display: none;">
+            <div class="card-header bg-success text-white">
+                <h4 class="card-title mb-0">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Результат готов
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="text-center mb-4">
+                    <i class="bi bi-file-text display-1 text-success"></i>
+                    <h5 class="mt-3">Транскрибация завершена успешно!</h5>
+                </div>
+
+                <!-- Results Info -->
+                <div id="results-info" class="mb-4">
+                    <div class="row">
+                        <div class="col-md-4 text-center">
+                            <div class="stat-item">
+                                <div class="stat-value" id="speaker-count">-</div>
+                                <div class="stat-label">Спикеров</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <div class="stat-item">
+                                <div class="stat-value" id="duration">-</div>
+                                <div class="stat-label">Длительность</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <div class="stat-item">
+                                <div class="stat-value" id="processing-time">-</div>
+                                <div class="stat-label">Время обработки</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Download Button -->
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-success btn-lg" onclick="downloadResult()">
+                        <i class="bi bi-download me-2"></i>
+                        Скачать результат
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" onclick="startNewJob()">
+                        <i class="bi bi-plus-circle me-2"></i>
+                        Обработать новые файлы
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Section -->
+        <div class="card shadow-lg border-0 mb-4 border-danger" id="error-section" style="display: none;">
+            <div class="card-header bg-danger text-white">
+                <h4 class="card-title mb-0">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Ошибка обработки
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="text-center mb-3">
+                    <i class="bi bi-x-circle display-1 text-danger"></i>
+                </div>
+                
+                <div class="alert alert-danger" role="alert">
+                    <strong>Произошла ошибка:</strong>
+                    <div id="error-message">Неизвестная ошибка</div>
+                </div>
+
+                <div class="d-grid">
+                    <button type="button" class="btn btn-primary" onclick="startNewJob()">
+                        <i class="bi bi-arrow-clockwise me-2"></i>
+                        Попробовать снова
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Help Section -->
+        <div class="card border-0 bg-light">
+            <div class="card-body">
+                <h6 class="card-title">
+                    <i class="bi bi-info-circle me-2"></i>
+                    Как это работает?
+                </h6>
+                <ol class="small mb-0">
+                    <li>Загрузите один или несколько аудио/видео файлов</li>
+                    <li>Файлы автоматически конвертируются в формат WAV</li>
+                    <li>Система определяет различных спикеров в записи</li>
+                    <li>Речь каждого спикера транскрибируется в текст</li>
+                    <li>Получите результат в виде текстового файла с таймкодами</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Additional scripts can be added here if needed -->
+{% endblock %} 

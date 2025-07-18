@@ -1,0 +1,111 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs/*.log
+*.log
+
+# Uploads and results
+uploads/*
+!uploads/.gitkeep
+results/*
+!results/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Audio files (keep structure but ignore content)
+*.wav
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.m4a
+*.aac
+*.ogg
+*.wma
+
+# Cache directories
+.cache/
+.pytest_cache/
+__pycache__/
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+desktop.ini
+
+# Model cache
+.cache/
+*.model
+models/
+
+# Hugging Face cache
+.cache/huggingface/
+.cache/torch/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Test databases
+*.db
+*.sqlite
+*.sqlite3 
