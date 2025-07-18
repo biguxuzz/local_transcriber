@@ -67,6 +67,15 @@ class TranscriptionProcessor:
             logger.error(f"Полная ошибка:\n{traceback.format_exc()}")
             logger.info("Приложение будет работать без диаризации спикеров - транскрибация целых файлов")
         
+        # Финальная проверка состояния диаризатора
+        if self.speaker_diarizer:
+            if hasattr(self.speaker_diarizer, 'pipeline') and self.speaker_diarizer.pipeline is not None:
+                logger.info("🎉 Диаризация полностью готова к работе!")
+            else:
+                logger.warning("⚠️ Диаризатор создан, но pipeline не готов - будет отключен при использовании")
+        else:
+            logger.info("ℹ️ Диаризация отключена - будет использоваться полная транскрибация файлов")
+        
         logger.info(f"TranscriptionProcessor инициализирован: model={whisper_model}")
         self._initialize_whisper()
     
@@ -365,17 +374,24 @@ class TranscriptionProcessor:
             # Этап 2: Диаризация спикеров (если доступна)
             segments = []
             if self.speaker_diarizer:
-                try:
-                    segments = self.speaker_diarizer.process_audio_with_diarization(job, combined_audio_path)
-                    if segments:
-                        # Этап 3: Транскрибация с привязкой к спикерам
-                        if not self.transcribe_with_speakers(job, combined_audio_path, segments):
-                            job.set_error("Ошибка транскрибации")
-                            return None
-                    else:
-                        logger.warning("Диаризация не обнаружила спикеров")
-                except Exception as e:
-                    logger.warning(f"Ошибка диаризации: {str(e)}")
+                # Проверяем что pipeline диаризации действительно готов
+                if hasattr(self.speaker_diarizer, 'pipeline') and self.speaker_diarizer.pipeline is not None:
+                    logger.info("🎤 Диаризатор готов - запуск диаризации спикеров")
+                    try:
+                        segments = self.speaker_diarizer.process_audio_with_diarization(job, combined_audio_path)
+                        if segments:
+                            logger.info(f"✅ Диаризация успешна: найдено {len(segments)} сегментов")
+                            # Этап 3: Транскрибация с привязкой к спикерам
+                            if not self.transcribe_with_speakers(job, combined_audio_path, segments):
+                                job.set_error("Ошибка транскрибации")
+                                return None
+                        else:
+                            logger.warning("Диаризация не обнаружила спикеров")
+                    except Exception as e:
+                        logger.warning(f"Ошибка диаризации: {str(e)}")
+                else:
+                    logger.warning("⚠️ Диаризатор создан, но pipeline не инициализирован - пропускаем диаризацию")
+                    self.speaker_diarizer = None  # Отключаем неработающий диаризатор
             
             # Если диаризация недоступна или не удалась, выполняем простую транскрибацию
             if not segments:
