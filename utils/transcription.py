@@ -27,7 +27,7 @@ class TranscriptionProcessor:
     """Основной процессор транскрибации, объединяющий все этапы."""
     
     def __init__(self, upload_folder: str, results_folder: str, 
-                 whisper_model: str = "base", hf_token: Optional[str] = None):
+                 whisper_model: str = "medium", hf_token: Optional[str] = None):
         """
         Инициализация процессора транскрибации.
         
@@ -106,6 +106,185 @@ class TranscriptionProcessor:
             raise RuntimeError(f"Не удалось загрузить модель Whisper: {str(e)}")
     
     @log_function_call
+    def transcribe_audio_segment_with_context(self, audio_path: str, start_time: float, 
+                                            end_time: float, context_before: float = 1.0,
+                                            context_after: float = 1.0) -> Optional[str]:
+        """
+        Транскрибировать сегмент аудио с дополнительным контекстом.
+        
+        Args:
+            audio_path: Путь к аудио файлу
+            start_time: Время начала сегмента в секундах
+            end_time: Время конца сегмента в секундах
+            context_before: Дополнительный контекст до сегмента в секундах
+            context_after: Дополнительный контекст после сегмента в секундах
+            
+        Returns:
+            str: Транскрибированный текст основного сегмента или None при ошибке
+        """
+        try:
+            if not self.whisper_model:
+                raise RuntimeError("Модель Whisper не инициализирована")
+            
+            # Расширенные границы с контекстом
+            extended_start = max(0.0, start_time - context_before)
+            extended_end = end_time + context_after
+            
+            # Создаем временный файл для расширенного сегмента
+            temp_file = self.file_manager.create_temp_file(suffix=".wav")
+            
+            try:
+                # Извлекаем расширенный сегмент
+                if not self.audio_processor.extract_audio_segment(
+                    audio_path, temp_file, extended_start, extended_end - extended_start):
+                    logger.error(f"Не удалось извлечь расширенный сегмент {extended_start}-{extended_end}")
+                    return None
+                
+                # Транскрибируем расширенный сегмент (оптимизировано против галлюцинаций)
+                result = self.whisper_model.transcribe(
+                    temp_file,
+                    language='ru',
+                    task='transcribe',
+                    # Оптимизированные параметры для контекстной транскрибации
+                    temperature=0.0,
+                    beam_size=1,      # Простой поиск без переборки
+                    best_of=1,        # Один вариант
+                    # НЕ используем initial_prompt - источник галлюцинаций!
+                    condition_on_previous_text=True,  # Контекст помогает
+                    fp16=False,
+                    compression_ratio_threshold=2.4,
+                    logprob_threshold=-1.0,
+                    no_speech_threshold=0.6,
+                    # Подавляем проблемные токены
+                    suppress_tokens=[50256, 50257, 50258, 50259, 50260, 50261, 50262, 50263, 50264, 50265],
+                    # Добавляем word-level timestamps для точного извлечения
+                    word_timestamps=True
+                )
+                
+                # Получаем полный текст с временными метками
+                full_text = result.get('text', '').strip()
+                segments_with_words = result.get('segments', [])
+                
+                if not full_text or not segments_with_words:
+                    logger.debug(f"Пустая транскрибация для расширенного сегмента {extended_start:.2f}-{extended_end:.2f}s")
+                    return None
+                
+                # Извлекаем текст, соответствующий оригинальному сегменту
+                target_text = self._extract_text_by_time(
+                    segments_with_words, 
+                    start_time - extended_start,  # Относительное время начала
+                    end_time - extended_start     # Относительное время конца
+                )
+                
+                if target_text:
+                    # Фильтруем галлюцинации
+                    target_text = self._filter_hallucinations(target_text)
+                    logger.debug(f"Контекстная транскрибация сегмента {start_time:.2f}-{end_time:.2f}s: '{target_text[:50]}...'")
+                    return target_text
+                else:
+                    # Fallback к обычной транскрибации если не удалось извлечь по времени
+                    logger.debug(f"Fallback к полному тексту для сегмента {start_time:.2f}-{end_time:.2f}s")
+                    full_text = self._filter_hallucinations(full_text)
+                    return full_text
+                
+            finally:
+                # Удаляем временный файл
+                self.file_manager.delete_file(temp_file)
+        
+        except Exception as e:
+            logger.error(f"Ошибка контекстной транскрибации сегмента {start_time}-{end_time}: {str(e)}")
+            # Fallback к обычной транскрибации
+            return self.transcribe_audio_segment(audio_path, start_time, end_time)
+
+    def _extract_text_by_time(self, segments_with_words: List[Dict], 
+                             target_start: float, target_end: float) -> Optional[str]:
+        """
+        Извлечь текст из сегментов по временным границам.
+        
+        Args:
+            segments_with_words: Сегменты с word-level timestamps
+            target_start: Начальное время (относительное)
+            target_end: Конечное время (относительное)
+            
+        Returns:
+            str: Извлеченный текст или None
+        """
+        try:
+            extracted_words = []
+            
+            for segment in segments_with_words:
+                words = segment.get('words', [])
+                for word_info in words:
+                    word_start = word_info.get('start', 0.0)
+                    word_end = word_info.get('end', 0.0)
+                    word = word_info.get('word', '').strip()
+                    
+                    # Проверяем пересечение с целевым интервалом
+                    if (word_start < target_end and word_end > target_start and word):
+                        extracted_words.append(word)
+            
+            if extracted_words:
+                result = ' '.join(extracted_words).strip()
+                return result if result else None
+            
+            return None
+        
+        except Exception as e:
+            logger.debug(f"Ошибка извлечения текста по времени: {str(e)}")
+            return None
+
+    def _filter_hallucinations(self, text: str) -> str:
+        """
+        Фильтровать галлюцинации и артефакты в транскрибированном тексте.
+        
+        Args:
+            text: Исходный текст
+            
+        Returns:
+            str: Очищенный текст
+        """
+        if not text:
+            return text
+        
+                # Список фраз-галлюцинаций, которые нужно удалить
+        hallucination_patterns = [
+            r'транскрибация\s+(фрагмента\s+)?телефонного\s+разговора.*',
+            r'фрагмент(а|ы)?\s+(телефонного\s+)?разговора.*',
+            r'на\s+русском\s+языке.*между.*собеседниками?',
+            r'транскрибация.*на\s+русском\s+языке',
+            r'между\s+двумя\s+собеседниками.*',
+            r'с\s+хорошим\s+произношением.*',
+            # Специфичные повторения
+            r'(\bфрагмент\w*\s*){3,}',  # Повторение слова "фрагмент"
+            r'(\bразговор\w*\s*){3,}',  # Повторение слова "разговор"
+            # Общие повторения (более строгие)
+            r'\b(\w+)\s+\1(\s+\1){2,}',  # Слово повторенное 3+ раза подряд
+        ]
+        
+        import re
+        
+        original_text = text
+        
+        # Применяем фильтры
+        for pattern in hallucination_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
+        # Очищаем лишние пробелы и знаки препинания
+        text = re.sub(r'\s+', ' ', text).strip()
+        text = re.sub(r'^[,.\s-]+|[,.\s-]+$', '', text)
+        
+        # Если весь текст был удален как галлюцинация, возвращаем пустую строку
+        if not text:
+            logger.debug(f"Текст удален как галлюцинация: '{original_text}'")
+            return ""
+        
+        # Логируем, если текст был значительно изменен
+        if len(text) < len(original_text) * 0.7:
+            logger.debug(f"Галлюцинация отфильтрована: '{original_text}' → '{text}'")
+        
+        return text
+
+    @log_function_call
     def transcribe_audio_segment(self, audio_path: str, start_time: float, 
                                end_time: float) -> Optional[str]:
         """
@@ -133,14 +312,29 @@ class TranscriptionProcessor:
                     logger.error(f"Не удалось извлечь сегмент {start_time}-{end_time}")
                     return None
                 
-                # Транскрибируем сегмент
+                # Транскрибируем сегмент с оптимизированными параметрами (без галлюцинаций)
                 result = self.whisper_model.transcribe(
                     temp_file,
                     language='ru',  # Русский язык по умолчанию
-                    task='transcribe'
+                    task='transcribe',
+                    # Оптимизированные параметры против галлюцинаций
+                    temperature=0.0,  # Детерминированные результаты
+                    beam_size=1,      # Простой greedy search - менее склонен к галлюцинациям
+                    best_of=1,        # Только один вариант - быстрее и точнее
+                    # НЕ используем initial_prompt - он вызывает галлюцинации!
+                    condition_on_previous_text=False,  # Независимая транскрибация сегментов
+                    fp16=False,  # Полная точность
+                    compression_ratio_threshold=2.4,  # Фильтр плохого качества
+                    logprob_threshold=-1.0,  # Фильтр по вероятности
+                    no_speech_threshold=0.6,  # Фильтр тишины
+                    # Подавляем повторяющиеся токены
+                    suppress_tokens=[50256, 50257, 50258, 50259, 50260, 50261, 50262, 50263, 50264, 50265]
                 )
                 
                 text = result.get('text', '').strip()
+                
+                # Фильтруем галлюцинации
+                text = self._filter_hallucinations(text)
                 
                 if text:
                     logger.debug(f"Транскрибирован сегмент {start_time:.2f}-{end_time:.2f}s: '{text[:50]}...'")
@@ -178,10 +372,26 @@ class TranscriptionProcessor:
                 audio_path,
                 language='ru',
                 task='transcribe',
-                verbose=False
+                verbose=False,
+                # Оптимизированные параметры для полного файла (без галлюцинаций)
+                temperature=0.0,  # Детерминированные результаты
+                beam_size=1,      # Простой greedy search
+                best_of=1,        # Один вариант - без переборки
+                # НЕ используем initial_prompt - он создает галлюцинации!
+                condition_on_previous_text=True,  # Контекст для длинного файла OK
+                fp16=False,       # Полная точность
+                compression_ratio_threshold=2.4,
+                logprob_threshold=-1.0,
+                no_speech_threshold=0.6,
+                # Подавляем токены, склонные к повторениям
+                suppress_tokens=[50256, 50257, 50258, 50259, 50260, 50261, 50262, 50263, 50264, 50265]
             )
             
             text = result.get('text', '').strip()
+            
+            # Фильтруем галлюцинации
+            text = self._filter_hallucinations(text)
+            
             logger.info(f"Полная транскрибация завершена, длина текста: {len(text)} символов")
             
             return text
@@ -190,6 +400,72 @@ class TranscriptionProcessor:
             logger.error(f"Ошибка полной транскрибации {audio_path}: {str(e)}")
             return None
     
+    def _merge_short_segments(self, segments: List[SpeakerSegment], 
+                             min_duration: float = 3.0) -> List[SpeakerSegment]:
+        """
+        Объединить короткие сегменты для улучшения контекста транскрибации.
+        
+        Args:
+            segments: Список сегментов спикеров
+            min_duration: Минимальная длительность сегмента в секундах
+            
+        Returns:
+            List[SpeakerSegment]: Объединенные сегменты
+        """
+        if not segments:
+            return segments
+        
+        merged_segments = []
+        current_segment = None
+        
+        for segment in segments:
+            if current_segment is None:
+                # Первый сегмент
+                current_segment = SpeakerSegment(
+                    speaker_id=segment.speaker_id,
+                    start_time=segment.start_time,
+                    end_time=segment.end_time,
+                    text=""
+                )
+            elif (segment.speaker_id == current_segment.speaker_id and 
+                  segment.start_time - current_segment.end_time < 1.0):  # Пауза меньше 1 сек
+                # Объединяем с текущим сегментом того же спикера
+                current_segment.end_time = segment.end_time
+            else:
+                # Завершаем текущий сегмент
+                if current_segment.duration >= min_duration:
+                    merged_segments.append(current_segment)
+                else:
+                    # Короткий сегмент - пытаемся присоединить к предыдущему
+                    if merged_segments and merged_segments[-1].speaker_id == current_segment.speaker_id:
+                        merged_segments[-1].end_time = current_segment.end_time
+                    else:
+                        merged_segments.append(current_segment)
+                
+                # Начинаем новый сегмент
+                current_segment = SpeakerSegment(
+                    speaker_id=segment.speaker_id,
+                    start_time=segment.start_time,
+                    end_time=segment.end_time,
+                    text=""
+                )
+        
+        # Добавляем последний сегмент
+        if current_segment:
+            if current_segment.duration >= min_duration:
+                merged_segments.append(current_segment)
+            elif merged_segments and merged_segments[-1].speaker_id == current_segment.speaker_id:
+                merged_segments[-1].end_time = current_segment.end_time
+            else:
+                merged_segments.append(current_segment)
+        
+        original_count = len(segments)
+        merged_count = len(merged_segments)
+        logger.info(f"Объединение сегментов: {original_count} → {merged_count} "
+                   f"(сокращено на {original_count - merged_count})")
+        
+        return merged_segments
+
     @log_function_call
     def transcribe_with_speakers(self, job: ProcessingJob, audio_path: str, 
                                segments: List[SpeakerSegment]) -> bool:
@@ -205,12 +481,20 @@ class TranscriptionProcessor:
             bool: True если транскрибация успешна
         """
         try:
-            job.update_progress(ProcessingStatus.TRANSCRIBING, "Транскрибация сегментов", 70.0)
+            job.update_progress(ProcessingStatus.TRANSCRIBING, "Подготовка сегментов", 65.0)
             
             if not segments:
                 logger.warning("Нет сегментов для транскрибации")
                 return False
             
+            # Объединяем короткие сегменты для лучшего контекста
+            original_count = len(segments)
+            segments = self._merge_short_segments(segments, min_duration=2.0)
+            
+            if len(segments) != original_count:
+                logger.info(f"Сегменты объединены для улучшения качества: {original_count} → {len(segments)}")
+            
+            job.update_progress(ProcessingStatus.TRANSCRIBING, "Транскрибация сегментов", 70.0)
             total_segments = len(segments)
             transcribed_segments = []
             
@@ -218,12 +502,22 @@ class TranscriptionProcessor:
             for i, segment in enumerate(segments):
                 log_progress(i + 1, total_segments, "Транскрибация сегментов")
                 
-                # Транскрибируем сегмент
-                text = self.transcribe_audio_segment(
-                    audio_path, 
-                    segment.start_time, 
-                    segment.end_time
-                )
+                # Транскрибируем сегмент с контекстом для лучшего качества
+                if segment.duration > 1.0:  # Для длинных сегментов используем контекст
+                    text = self.transcribe_audio_segment_with_context(
+                        audio_path, 
+                        segment.start_time, 
+                        segment.end_time,
+                        context_before=2.0,  # 2 секунды контекста до
+                        context_after=1.0    # 1 секунда контекста после
+                    )
+                else:
+                    # Для коротких сегментов обычная транскрибация
+                    text = self.transcribe_audio_segment(
+                        audio_path, 
+                        segment.start_time, 
+                        segment.end_time
+                    )
                 
                 if text:
                     # Обновляем сегмент с текстом

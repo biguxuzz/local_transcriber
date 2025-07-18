@@ -40,7 +40,7 @@ class Config:
     AUDIO_FORMAT = 'wav'
     
     # Настройки моделей
-    WHISPER_MODEL = os.environ.get('WHISPER_MODEL') or 'base'
+    WHISPER_MODEL = os.environ.get('WHISPER_MODEL') or 'medium'  # Улучшенная модель для лучшего качества
     DIARIZATION_MODEL = os.environ.get('DIARIZATION_MODEL') or 'pyannote/speaker-diarization'
     
     # Настройки Hugging Face
