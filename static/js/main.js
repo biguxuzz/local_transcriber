@@ -8,10 +8,14 @@
 let currentJobId = null;
 let statusCheckInterval = null;
 let selectedFiles = [];
+let backgroundGlitch = null;
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Local Transcriber interface loaded');
+    
+    // Initialize background glitch effect
+    initializeBackgroundGlitch();
     
     // Setup drag and drop for file upload
     setupDragAndDrop();
@@ -22,6 +26,89 @@ document.addEventListener('DOMContentLoaded', function() {
     // Setup form submission
     setupFormSubmission();
 });
+
+/**
+ * Initialize background glitch effect
+ */
+function initializeBackgroundGlitch() {
+    // Create background container
+    createBackgroundContainer();
+    
+    // Initialize glitch effect if LetterGlitch is available
+    if (typeof LetterGlitch !== 'undefined') {
+        try {
+            backgroundGlitch = new LetterGlitch('background-glitch', {
+                glitchSpeed: 50,
+                centerVignette: true,
+                outerVignette: false,
+                smooth: true,
+                glitchColors: ['#2b4539', '#61dca3', '#61b3dc']
+            });
+            console.log('Background glitch effect initialized');
+        } catch (error) {
+            console.error('Failed to initialize background glitch:', error);
+        }
+    } else {
+        console.warn('LetterGlitch class not found');
+    }
+}
+
+/**
+ * Create background container for glitch effect
+ */
+function createBackgroundContainer() {
+    // Check if container already exists
+    if (document.getElementById('background-glitch')) {
+        return;
+    }
+    
+    const backgroundContainer = document.createElement('div');
+    backgroundContainer.id = 'background-glitch';
+    backgroundContainer.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: -999;
+        pointer-events: none;
+    `;
+    
+    // Insert at the beginning of body
+    document.body.insertBefore(backgroundContainer, document.body.firstChild);
+}
+
+/**
+ * Control background glitch effect
+ * @param {boolean} enabled - Whether to enable or disable the effect
+ */
+function toggleBackgroundGlitch(enabled) {
+    if (backgroundGlitch) {
+        if (enabled) {
+            backgroundGlitch.startAnimation();
+        } else {
+            backgroundGlitch.stop();
+        }
+    }
+}
+
+/**
+ * Update glitch effect colors based on processing state
+ * @param {string} state - Processing state
+ */
+function updateGlitchColors(state) {
+    if (!backgroundGlitch) return;
+    
+    const colorSchemes = {
+        'idle': ['#2b4539', '#61dca3', '#61b3dc'],
+        'processing': ['#856404', '#ffc107', '#fd7e14'],
+        'completed': ['#198754', '#20c997', '#0dcaf0'],
+        'error': ['#dc3545', '#fd5e53', '#e74c3c']
+    };
+    
+    const colors = colorSchemes[state] || colorSchemes.idle;
+    backgroundGlitch.updateOptions({ glitchColors: colors });
+}
 
 /**
  * Setup drag and drop functionality for file upload
@@ -323,6 +410,9 @@ function showProcessingSection() {
     if (jobIdElement && currentJobId) {
         jobIdElement.textContent = currentJobId;
     }
+    
+    // Update glitch colors for processing state
+    updateGlitchColors('processing');
 }
 
 /**
@@ -476,6 +566,9 @@ function showResultsSection(job) {
     // Update statistics
     updateResultsInfo(job);
     
+    // Update glitch colors for completed state
+    updateGlitchColors('completed');
+    
     showAlert('Транскрибация завершена успешно!', 'success');
 }
 
@@ -541,6 +634,9 @@ function showErrorSection(errorMessage) {
         errorMessageElement.textContent = errorMessage || 'Неизвестная ошибка';
     }
     
+    // Update glitch colors for error state
+    updateGlitchColors('error');
+    
     showAlert('Произошла ошибка при обработке', 'danger');
 }
 
@@ -595,6 +691,9 @@ function startNewJob() {
         uploadSection.style.display = 'block';
         uploadSection.classList.add('fade-in');
     }
+    
+    // Reset glitch colors to idle state
+    updateGlitchColors('idle');
 }
 
 /**
